@@ -1,0 +1,144 @@
+---
+title: "Midterm"
+author: "Jeffrey Zhuohui Liang"
+date: "3/7/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(reticulate)
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(pls)
+library(splines)
+library(mgcv)
+library(pdp)
+library(earth)
+library(doParallel)
+
+knitr::opts_chunk$set(
+  fig.height = 6,
+  fig.width = 8,
+  message = F,
+  echo = T,
+  warning = F,
+  cache = T
+)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis",
+  digits = 3
+)
+
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+```
+
+
+
+\section{Method}
+
+```{r load_data,echo=F}
+hrt_data =
+  tibble(
+    location = c("cle", "swi", "va", "hun"),
+    file =
+      c(
+        "./data/processed.cleveland.data",
+        "./data/processed.switzerland.data",
+        "./data/processed.va.data",
+        "./data/processed.hungarian.data"
+      )
+  ) %>%
+  mutate(location = as.factor(location),
+         data = map(file,
+                    ~ read_csv(here::here(.x), col_names = F,
+                               col_types = "dddddddddddddd"))) %>% 
+  unnest(data)
+
+
+colnames(hrt_data)[3:16] = c(
+  "Age",
+  "Sex",
+  "Chest_Pain_Type",
+  "Resting_Blood_Pressure",
+  "Serum_Cholesterol",
+  "Fasting_Blood_Sugar",
+  "Resting_ECG",
+  "Max_Heart_Rate_Achieved",
+  "Exercise_Induced_Angina",
+  "ST_Depression_Exercise",
+  "Peak_Exercise_ST_Segment",
+  "Num_Major_Vessels_Flouro",
+  "Thalassemia",
+  "Diagnosis_Heart_Disease"
+)
+
+hrt_data  = hrt_data %>%
+  janitor::clean_names() %>%
+  select(-file) %>%
+  mutate(
+    sex = case_when(sex == 0 ~ "female",
+                    sex == 1 ~ "male"),
+    chest_pain_type = case_when(
+      chest_pain_type == 1 ~ "typical angina",
+      chest_pain_type == 2 ~ "atypical angina",
+      chest_pain_type == 3 ~ "non-angina pain",
+      chest_pain_type == 4 ~ "asymptomatic angina"
+    ),
+    fasting_blood_sugar =
+      case_when(
+        fasting_blood_sugar == 0 ~ "fasting blood sugar <= 120 mg/dl",
+        fasting_blood_sugar == 1 ~ "fasting blood sugar > 120 mg/dl"
+      ),
+    resting_ecg = case_when(
+      resting_ecg == 0 ~ "normal",
+      resting_ecg == 1 ~ "ST-T wave abnormality",
+      resting_ecg == 2 ~ "left ventricle hyperthrophy"
+    ),
+    exercise_induced_angina = 
+      case_when(
+       exercise_induced_angina ==  0 ~ 'no',
+       exercise_induced_angina == 1 ~ "yes"
+      ),
+    peak_exercise_st_segment =
+      case_when(
+        peak_exercise_st_segment == 1 ~ "Up-sloaping",
+        peak_exercise_st_segment == 2 ~ "Flat",
+        peak_exercise_st_segment == 3 ~ "Down-sloaping"
+      ),
+    thalassemia =
+      case_when(
+        thalassemia == 3 ~ "normal",
+        thalassemia  == 6 ~ "fixed defect",
+        thalassemia == 7 ~ "reversible defect"
+      ),
+    diagnosis_heart_disease = 
+      case_when(
+        diagnosis_heart_disease == 0 ~ "absense of heart disease",
+        diagnosis_heart_disease >0 ~"present of heart disease"
+      ),
+    across(where(is.character),as.factor)
+  )
+
+train_index = createDataPartition(hrt_data$diagnosis_heart_disease,list = F)
+
+Y_tr = hrt_data$diagnosis_heart_disease[train_index]
+
+Y_ts = hrt_data$diagnosis_heart_disease[-train_index]
+
+X_tr = model.matrix(diagnosis_heart_disease ~., hrt_data)[train_index,-1]
+
+X_ts = model.matrix(diagnosis_heart_disease ~., hrt_data)[-train_index,-1]
+
+klaR::partimat(
+  diagnosis_heart_disease~.,
+  data = hrt_data,
+  subset = train_index
+)
+```
+
