@@ -60,7 +60,7 @@ hrt_data =
                                col_types = "dddddddddddddd"))) %>% 
   unnest(data)
 
-
+# change column's name
 colnames(hrt_data)[3:16] = c(
   "Age",
   "Sex",
@@ -119,26 +119,208 @@ hrt_data  = hrt_data %>%
       ),
     diagnosis_heart_disease = 
       case_when(
-        diagnosis_heart_disease == 0 ~ "absense of heart disease",
-        diagnosis_heart_disease >0 ~"present of heart disease"
+        diagnosis_heart_disease == 0 ~ "absense",
+        diagnosis_heart_disease >0 ~"present"
       ),
     across(where(is.character),as.factor)
-  )
+  ) %>% 
+  relocate(diagnosis_heart_disease)
 
+skimr::skim_without_charts(hrt_data)
+```
+
+```{r data_preprocess}
+# split into training set
 train_index = createDataPartition(hrt_data$diagnosis_heart_disease,list = F)
 
 Y_tr = hrt_data$diagnosis_heart_disease[train_index]
 
 Y_ts = hrt_data$diagnosis_heart_disease[-train_index]
 
-X_tr = model.matrix(diagnosis_heart_disease ~., hrt_data)[train_index,-1]
+options(na.action = "na.pass")
+X_tr = model.matrix(diagnosis_heart_disease ~., hrt_data,na.action = "na.pass")[train_index,-1]
 
-X_ts = model.matrix(diagnosis_heart_disease ~., hrt_data)[-train_index,-1]
+X_ts = model.matrix(diagnosis_heart_disease ~., hrt_data,na.action = "na.pass")[-train_index,-1]
 
-klaR::partimat(
-  diagnosis_heart_disease~.,
-  data = hrt_data,
-  subset = train_index
-)
+TRC = caret::trainControl(method = "repeatedcv",repeats=5,
+                          summaryFunction = twoClassSummary,
+                          classProbs = T)
+
+PPS = c("knnImpute", "center", "scale")
 ```
+# Modeling
+
+
+```{r logistic,cache=T}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+logistic_model =
+  train(
+    X_tr,
+    Y_tr,
+    method = "glmnet",
+    tuneGrid = expand.grid(alpha = seq(0,1,length=6),
+                           lambda = exp(seq(
+                             6, to = -6, length = 50
+                           ))),
+    family = "binomial",
+    preProcess = PPS,
+    metric = "ROC",
+    trControl = TRC
+  )
+
+stopCluster(cl)
+
+plot(logistic_model,xTrans = function(x) log(x))
+
+coef(logistic_model$finalModel,logistic_model$bestTune$lambda) %>% 
+  as.vector() %>% 
+  tibble(term = c("Intercept",colnames(X_tr)),
+         coefficient = .) %>% 
+  knitr::kable(caption = "Coefficient of Lasso Logistic Regression")
+```
+
+```{r MARS,cache=T}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+mars_model = 
+  train(X_tr,
+        Y_tr,
+        method = "earth",
+        tuneGrid = expand.grid(degree = 1:3,
+                               nprune = 5:20),
+        preProcess = PPS,
+        trControl = TRC,
+        metric = "ROC")
+
+stopCluster(cl)
+
+ggplot(mars_model)
+```
+
+```{r knn,cache=T}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+knn_model = 
+  train(X_tr,
+        Y_tr,
+        method = "knn",
+        tuneGrid = expand.grid(k = 10:35),
+        preProcess = PPS,
+        trControl = TRC,
+        metric = "ROC")
+
+stopCluster(cl)
+
+ggplot(knn_model)
+```
+
+```{r lda,cache=T}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+lda_model =  train(
+  X_tr,
+  Y_tr,
+  method = "lda",
+  preProcess = PPS,
+  trControl = TRC,
+  metric = "ROC"
+)
+
+stopCluster(cl)
+```
+
+```{r qda,cache=T}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+qda_model =  train(
+  X_tr,
+  Y_tr,
+  method = "qda",
+  preProcess = PPS,
+  trControl = TRC,
+  metric = "ROC"
+)
+
+stopCluster(cl)
+```
+
+```{r nb,eval=F}
+set.seed(123123)
+cl = parallel::makePSOCKcluster(5)
+doParallel::registerDoParallel(cl)
+
+nb_model =
+  train(
+    X_tr,
+    Y_tr,
+    method = "nb",
+    tuneGrid = expand.grid(
+      usekernel = c(T, F),
+      fL = 1,
+      adjust = seq(.2, 3, by = .2)
+    ),
+    preProcess = PPS,
+    trControl = TRC,
+    metric = "ROC"
+  )
+stopCluster(cl)
+```
+
+## Performance comparison
+
+```{r rsmp}
+rsmp = resamples(
+  list(
+    logistic = logistic_model,
+    MARS = mars_model,
+    knn = knn_model,
+    lda = lda_model,
+    qda = qda_model
+  ),
+  metric = c("ROC", "Kappa")
+)
+
+summary(rsmp)
+
+bwplot(rsmp,metric = "ROC")
+```
+
+```{r ROC}
+ROC =
+  expand.grid(
+    test_X = list(X_ts),
+    test_Y = list(Y_ts),
+    model = list(logistic_model, mars_model, knn_model, lda_model, qda_model)
+  ) %>%
+  mutate(
+    pred = map2(model, test_X,  ~ predict(.x, newdata = .y, type = "prob")[, 2]),
+    roc = map2(test_Y, pred,  ~ pROC::roc(.x, .y))
+  ) %>% 
+  pull(roc)
+
+auc = c()
+
+for (i in 1:5){
+  auc = append(auc,ROC[[i]]$auc[1])
+  plot(ROC[[i]],col = i, add = T * (i>1), legacy.axes = T * (i==1))
+}
+
+model_name = 
+  c("lasso logistic","MARS","KNN","LDA","QDA")
+
+legend("bottomright",
+       legend = paste0(model_name,"~",round(auc,3)),col=1:5,lwd=2)
+```
+
 
