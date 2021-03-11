@@ -6,6 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
+set.seed(123123)
 library(reticulate)
 library(tidyverse)
 library(caret)
@@ -16,6 +17,7 @@ library(mgcv)
 library(pdp)
 library(earth)
 library(doParallel)
+library(patchwork)
 
 knitr::opts_chunk$set(
   fig.height = 6,
@@ -25,7 +27,10 @@ knitr::opts_chunk$set(
   warning = F,
   cache = T
 )
-theme_set(theme_minimal() + theme(legend.position = "bottom"))
+theme_set(theme_minimal() + theme(
+  legend.position = "bottom",
+  plot.title = element_text(hjust = 0.5)
+))
 options(
   ggplot2.continuous.colour = "viridis",
   ggplot2.continuous.fill = "viridis",
@@ -131,7 +136,7 @@ skimr::skim_without_charts(hrt_data)
 
 ```{r data_preprocess}
 # split into training set
-train_index = createDataPartition(hrt_data$diagnosis_heart_disease,list = F)
+train_index = createDataPartition(hrt_data$diagnosis_heart_disease,p=0.8,list = F)
 
 Y_tr = hrt_data$diagnosis_heart_disease[train_index]
 
@@ -173,13 +178,10 @@ logistic_model =
 
 stopCluster(cl)
 
-plot(logistic_model,xTrans = function(x) log(x))
-
-coef(logistic_model$finalModel,logistic_model$bestTune$lambda) %>% 
-  as.vector() %>% 
-  tibble(term = c("Intercept",colnames(X_tr)),
-         coefficient = .) %>% 
-  knitr::kable(caption = "Coefficient of Lasso Logistic Regression")
+p_logistics =
+  ggplot(logistic_model) +
+  scale_x_continuous(trans = "log")+
+  labs(title = "Lasso Logistics")
 ```
 
 ```{r MARS,cache=T}
@@ -199,7 +201,7 @@ mars_model =
 
 stopCluster(cl)
 
-ggplot(mars_model)
+p_mars = ggplot(mars_model) +labs(title ="MARS")
 ```
 
 ```{r knn,cache=T}
@@ -211,14 +213,14 @@ knn_model =
   train(X_tr,
         Y_tr,
         method = "knn",
-        tuneGrid = expand.grid(k = 10:35),
+        tuneGrid = expand.grid(k = seq(10,60,2)),
         preProcess = PPS,
         trControl = TRC,
         metric = "ROC")
 
 stopCluster(cl)
 
-ggplot(knn_model)
+p_knn = ggplot(knn_model)+labs(title = "KNN")
 ```
 
 ```{r lda,cache=T}
@@ -276,6 +278,26 @@ nb_model =
   )
 stopCluster(cl)
 ```
+
+```{r res}
+coef(logistic_model$finalModel,logistic_model$bestTune$lambda) %>% 
+  as.vector() %>% 
+  tibble(term = c("Intercept",colnames(X_tr)),
+         coefficient = .) %>% 
+  knitr::kable(caption = "Coefficient of Lasso Logistic Regression")
+
+p_mv = vip::vip(mars_model$finalModel) + labs(title = "MARS: Importance of predictor")
+
+p_ll = ggplotify::as.ggplot(~plot_glmnet(logistic_model$finalModel))
+p_ll = p_ll + labs(title = "Lasso Logistics Model") +
+  xlim(c(0.1,1))+
+  ylim(c(0.1,1))
+
+p_ll | p_mv
+
+p_logistics | (p_mars/p_knn)
+```
+
 
 ## Performance comparison
 
