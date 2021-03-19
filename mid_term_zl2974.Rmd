@@ -40,12 +40,26 @@ options(
 
 scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
-
 ```
 
 
 
 \section{Method}
+```{r load_origin,echo=F,eval=F}
+source("read_origin_data.R")
+
+origin = tibble()
+
+for(file in list.files("./data/orgin/",full.names = T)){
+  origin = bind_rows(origin,
+                     read_origin(file))
+}
+
+colnames(origin) = colnames(read_csv("full_data.name"))
+
+origin[origin==-9] = NA
+```
+
 
 ```{r load_data,echo=F}
 hrt_data =
