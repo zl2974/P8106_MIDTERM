@@ -8,7 +8,6 @@ output: pdf_document
 ```{r setup, include=FALSE}
 set.seed(123123)
 library(reticulate)
-library(tidyverse)
 library(caret)
 library(glmnet)
 library(pls)
@@ -18,12 +17,14 @@ library(pdp)
 library(earth)
 library(doParallel)
 library(patchwork)
+library(DALEX)
+library(tidyverse)
 
 knitr::opts_chunk$set(
   fig.height = 6,
   fig.width = 8,
   message = F,
-  echo = T,
+  echo = F,
   warning = F,
   cache = T
 )
@@ -40,16 +41,15 @@ options(
 
 scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
-
 ```
 
 
 
 # Introduction
 
-    Cardiovascular disease is the leading disease burden in U.S, according to \textit{www.cdc.com} \cite{cdccardio}, on average one person die from heart disease every 36 seconds. And 1 in 4 death is caused by cardiovascular disease. Heavy disease burden of vardiovascular disease should be manage to improve population health.
+  Cardiovascular disease is the leading disease burden in U.S, according to \textit{www.cdc.com} \cite{cdccardio}, on average one person die from heart disease every 36 seconds. And 1 in 4 death is caused by cardiovascular disease. Heavy disease burden of cardiovascular disease should be manage to improve population health.
     
-    One of many important manners is screening, \textit{American Heart Association} lists that
+  One of many important manners is screening, \textit{American Heart Association}\cite{AHA} lists that
 \begin{itemize}
 \item Blood Pressure
 \item Fasting Lipoprotein Profile
@@ -59,9 +59,53 @@ scale_fill_discrete = scale_fill_viridis_d
 \end{itemize}
 are important screening that help monitor heart condition.
  
-    In light of aiding the screening process, we will use `Heart Disease Data Set` from UCI \cite{heartdiseasedata} to build our models and select one for applications.
-    
-    The `Heart Disease Data` is a 
+  In light of aiding the screening process, we will use `Heart Disease Data Set` from UCI \cite{heartdiseasedata} to build our models and select one for applications.
+
+```{r load_origin,echo=F,eval=F}
+source("read_origin_data.R")
+
+origin = tibble()
+
+for(file in list.files("./data/orgin/",full.names = T)){
+  origin = bind_rows(origin,
+                     read_origin(file))
+}
+
+colnames(origin) = colnames(read_csv("full_data.name"))
+
+origin[origin==-9] = NA
+```
+
+  The `Heart Disease Data` is a dataset with 76 attributes, all data were collected from 4 sites, namely Cleveland, Hungary, Switzerland, and the VA Long Beach. Of all 76 attributes, we selected 14 variables as our training data in this case as there're previously researchs have done similar job and used these 14 pre-selected variables. 
+  The predictors used are:
+
+* age: The person’s age in years
+* sex: The person’s sex (1 = male, 0 = female)
+* cp: chest pain type
+  — Value 0: asymptomatic
+  — Value 1: atypical angina
+  — Value 2: non-anginal pain
+  — Value 3: typical angina
+* trestbps: The person’s resting blood pressure (mm Hg on admission to the hospital)
+*  chol: The person’s cholesterol measurement in mg/dl
+*  fbs: The person’s fasting blood sugar (> 120 mg/dl, 1 = true; 0 = false)
+*  restecg: resting electrocardiographic results
+  — Value 0: showing probable or definite left ventricular hypertrophy by Estes’ criteria
+  — Value 1: normal
+  — Value 2: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV)
+* thalach: The person’s maximum heart rate achieved
+* exang: Exercise induced angina (1 = yes; 0 = no)
+* oldpeak: ST depression induced by exercise relative to rest (‘ST’ relates to positions on the ECG plot. See more here)
+* slope: the slope of the peak exercise ST segment 
+  — 0: downsloping; 
+  - 1: flat; 
+  - 2: upsloping
+* ca: The number of major vessels (0–3)
+* thal: A blood disorder called thalassemia Value 0: NULL (dropped from the dataset previously
+  - Value 1: fixed defect (no blood flow in some part of the heart)
+  - Value 2: normal blood flow
+  - Value 3: reversible defect (a blood flow is observed but it is not normal)
+* target: Heart disease (1 = no, 0= yes)
 
 ```{r load_data,echo=F}
 hrt_data =
@@ -149,8 +193,11 @@ hrt_data  = hrt_data %>%
 
 skimr::skim_without_charts(hrt_data)
 ```
+ 
+# Exploratory analysis
 
 ```{r data_preprocess}
+hrt_data = hrt_data %>% select(-location)
 # split into training set
 train_index = createDataPartition(hrt_data$diagnosis_heart_disease,p=0.8,list = F)
 
@@ -164,12 +211,44 @@ X_tr = model.matrix(diagnosis_heart_disease ~., hrt_data,na.action = "na.pass")[
 X_ts = model.matrix(diagnosis_heart_disease ~., hrt_data,na.action = "na.pass")[-train_index,-1]
 
 TRC = caret::trainControl(method = "repeatedcv",repeats=5,
+                          number = 5,
                           summaryFunction = twoClassSummary,
                           classProbs = T)
-
-PPS = c("knnImpute", "center", "scale")
 ```
+
+
+```{r explore}
+featurePlot(x=X_tr,y=Y_tr,
+            scales = list(x = list(relation = "free"),
+                          y = list(relation = "free")),
+            plot = "density",
+            pch = "|",
+            auto.key = list(columns = 3))
+```
+
+  From above plot, some features are well distinguish for disease status, eg. `num_major_vessels_flouro `, `chest_pain_typeatypical angina`,`st_depression_exercise`, these variables may be statistical significant for the model.
+
 # Modeling
+
+  As shown, there are missing values in our data. Assuming that these values are missing at random, we impute these values with `knnImpute` method. All data were center and scale before training.
+
+  To train classifiers, we choose `Lasso logistics`, `MARS`, `KNN`, `LDA`, `QDA` and `TREE` models to train our data with 5-fold cross validation.
+  
+  When training, `ROC` is used as loss function for our model, as we intent to build a model with highest classification ability to predict whether a client has heart disease. 
+  
+## Model tunning
+
+  lasso logistics regression is logistics regression which loss function is modified with L1 penalty, we tune this L1 penalty term $\lambda$ for lasso regression model training with cross-validation.
+  
+  MARS has model predictors' order and prune remaining term as parameters for tuning. Assuming that data can be well-explain with at most cubic model, we tune the order from 1-3 and leaving cross validation to choose for prune term.
+  
+  TREE model has tree complexity for tuning.
+  
+  KNN has the number of closest neighbor as tuning parameter.
+  
+  LDA and QDA do not have tuning parameters.
+  
+  All parameter is tune by 5-fold cross validation and choose the one with highest ROC.
 
 
 ```{r logistic,cache=T}
@@ -187,7 +266,7 @@ logistic_model =
                              6, to = -6, length = 50
                            ))),
     family = "binomial",
-    preProcess = PPS,
+    preProcess = c("knnImpute", "center", "scale"),
     metric = "ROC",
     trControl = TRC
   )
@@ -195,7 +274,7 @@ logistic_model =
 stopCluster(cl)
 
 p_logistics =
-  ggplot(logistic_model) +
+  ggplot(logistic_model,highlight = T) +
   scale_x_continuous(trans = "log")+
   labs(title = "Lasso Logistics")
 ```
@@ -211,13 +290,13 @@ mars_model =
         method = "earth",
         tuneGrid = expand.grid(degree = 1:3,
                                nprune = 5:20),
-        preProcess = PPS,
+        preProcess = c("knnImpute", "center", "scale"),
         trControl = TRC,
         metric = "ROC")
 
 stopCluster(cl)
 
-p_mars = ggplot(mars_model) +labs(title ="MARS")
+p_mars = ggplot(mars_model,highlight = T) +labs(title ="MARS")
 ```
 
 ```{r knn,cache=T}
@@ -230,13 +309,13 @@ knn_model =
         Y_tr,
         method = "knn",
         tuneGrid = expand.grid(k = seq(10,60,2)),
-        preProcess = PPS,
+        preProcess = c("knnImpute", "center", "scale"),
         trControl = TRC,
         metric = "ROC")
 
 stopCluster(cl)
 
-p_knn = ggplot(knn_model)+labs(title = "KNN")
+p_knn = ggplot(knn_model,highlight = T)+labs(title = "KNN")
 ```
 
 ```{r lda,cache=T}
@@ -248,7 +327,7 @@ lda_model =  train(
   X_tr,
   Y_tr,
   method = "lda",
-  preProcess = PPS,
+  preProcess = c("knnImpute", "center", "scale"),
   trControl = TRC,
   metric = "ROC"
 )
@@ -265,7 +344,7 @@ qda_model =  train(
   X_tr,
   Y_tr,
   method = "qda",
-  preProcess = PPS,
+  preProcess = c("knnImpute", "center", "scale"),
   trControl = TRC,
   metric = "ROC"
 )
@@ -284,23 +363,29 @@ tree_model =
     Y_tr,
     method = "rpart",
     tuneGrid = expand.grid(
-      cp = exp(seq(-10,-3,length=50))
+      cp = exp(seq(-7,-4,length=50))
     ),
-    preProcess = PPS,
-    trControl = TRC,
+    preProcess = c("center", "scale"),
+    trControl = caret::trainControl(method = "repeatedcv",repeats=5,
+                          number = 5,
+                          summaryFunction = twoClassSummary,
+                          classProbs = T,
+                          selectionFunction = "oneSE"),
     metric = "ROC"
   )
 stopCluster(cl)
 
-ptree = ggplot(tree_model,highlight = T)
+p_tree = 
+  ggplot(tree_model,highlight = T) + labs(title = "TREE")
 ```
 
+
 ```{r res}
-coef(logistic_model$finalModel,logistic_model$bestTune$lambda) %>% 
-  as.vector() %>% 
-  tibble(term = c("Intercept",colnames(X_tr)),
-         coefficient = .) %>% 
-  knitr::kable(caption = "Coefficient of Lasso Logistic Regression")
+#coef(logistic_model$finalModel,logistic_model$bestTune$lambda) %>% 
+#  as.vector() %>% 
+#  tibble(term = c("Intercept",colnames(X_tr)),
+#         coefficient = .) %>% 
+#  knitr::kable(caption = "Coefficient of Lasso Logistic Regression")
 
 p_mv = vip::vip(mars_model$finalModel) + labs(title = "MARS: Importance of predictor")
 
@@ -309,10 +394,11 @@ p_ll = p_ll + labs(title = "Lasso Logistics Model") +
   xlim(c(0.1,1))+
   ylim(c(0.1,1))
 
-(p_ll | p_mv) / p_tree
+(p_logistics / p_tree) | (p_mars/p_knn)
 
-p_logistics | (p_mars/p_knn)
+# (p_ll | p_mv)
 
+# rpart.plot::rpart.plot(tree_model$finalModel)
 
 ```
 
@@ -326,22 +412,37 @@ rsmp = resamples(
     MARS = mars_model,
     knn = knn_model,
     lda = lda_model,
-    qda = qda_model
+    qda = qda_model,
+    TREE = tree_model
   ),
   metric = c("ROC", "Kappa")
 )
 
 summary(rsmp)
 
-bwplot(rsmp,metric = "ROC")
+bwplot(rsmp,metric = c("ROC","Sens"))
 ```
+  In our trained model have similar ROC peformance excepted for `TREE` and `qda`. Considering our model is used for improving screening process, we would prefer model with higher sensitivity. Considering both metrics, MARS method which has high ROC and highest mean sensitivity is chosen as our model.
+
+```{r explain_mars}
+mars = explain(mars_model,label = "MARS",data = X_tr,y = Y_tr %>% as.numeric(),verbose = F)
+mars_important =  model_parts(mars)
+
+mars_int = plot(mars_important)
+
+plot(mars_int)
+```
+  In the MARS model, `chest pain type: atypical angina` has the highest importance, followed by `serum cholesterol` and `st depression excercise`. Against our assumption in exploration, `fasting blood sugar` has second lowest importance to AUC loss in the MARS model.
+  
+  The models, included others not selected model is test against the test data. The test performance is similar to the train performance.
+
 
 ```{r ROC}
 ROC =
   expand.grid(
     test_X = list(X_ts),
     test_Y = list(Y_ts),
-    model = list(logistic_model, mars_model, knn_model, lda_model, qda_model)
+    model = list(logistic_model, mars_model, knn_model, lda_model, qda_model,tree_model)
   ) %>%
   mutate(
     pred = map2(model, test_X,  ~ predict(.x, newdata = .y, type = "prob")[, 2]),
@@ -351,16 +452,29 @@ ROC =
 
 auc = c()
 
-for (i in 1:5){
+for (i in 1:6){
   auc = append(auc,ROC[[i]]$auc[1])
   plot(ROC[[i]],col = i, add = T * (i>1), legacy.axes = T * (i==1))
 }
 
 model_name = 
-  c("lasso logistic","MARS","KNN","LDA","QDA")
+  c("lasso logistic","MARS","KNN","LDA","QDA","TREE")
 
 legend("bottomright",
-       legend = paste0(model_name,"~",round(auc,3)),col=1:5,lwd=2)
+       legend = paste0(model_name,"~",round(auc,3)),col=1:6,lwd=2)
 ```
 
+# Conclusion
 
+  MARS model has high predictability and high sensitivity, which is suitable for screening. The MARS model, with it's nature of spline, also provide good reference for critical values for labs/ testing result for diagnosis.
+
+\begin{thebibliography}
+\bibitem{cdccardio}
+Centers for Disease Control and Prevention:
+\texttt{https://www.cdc.gov/heartdisease/facts.htm#:~:text=Heart%20Disease%20in%20the%20United%20States&text=One%20person%20dies%20every%2036,1%20in%20every%204%20deaths.&text=Heart%20disease%20costs%20the%20United,year%20from%202014%20to%202015.}
+\bibitem{AHA}
+American Heart Association:Heart-Health Screenings
+\bibitem{heartdiseasedata}
+USI:
+\texttt{http://archive.ics.uci.edu/ml/datasets/heart+Disease}
+\end{thebibliography}
