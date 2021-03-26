@@ -45,7 +45,23 @@ scale_fill_discrete = scale_fill_viridis_d
 
 
 
-\section{Method}
+# Introduction
+
+    Cardiovascular disease is the leading disease burden in U.S, according to \textit{www.cdc.com} \cite{cdccardio}, on average one person die from heart disease every 36 seconds. And 1 in 4 death is caused by cardiovascular disease. Heavy disease burden of vardiovascular disease should be manage to improve population health.
+    
+    One of many important manners is screening, \textit{American Heart Association} lists that
+\begin{itemize}
+\item Blood Pressure
+\item Fasting Lipoprotein Profile
+\item Body Weight
+\item Blood Glucose
+\item Smoking, physical activity, diet
+\end{itemize}
+are important screening that help monitor heart condition.
+ 
+    In light of aiding the screening process, we will use `Heart Disease Data Set` from UCI \cite{heartdiseasedata} to build our models and select one for applications.
+    
+    The `Heart Disease Data` is a 
 
 ```{r load_data,echo=F}
 hrt_data =
@@ -276,7 +292,7 @@ tree_model =
   )
 stopCluster(cl)
 
-ggplot(tree_model,highlight = T)
+ptree = ggplot(tree_model,highlight = T)
 ```
 
 ```{r res}
