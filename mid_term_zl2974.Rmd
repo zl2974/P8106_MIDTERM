@@ -418,14 +418,14 @@ rsmp = resamples(
   metric = c("ROC", "Kappa")
 )
 
-summary(rsmp)
+#summary(rsmp)
 
 bwplot(rsmp,metric = c("ROC","Sens"))
 ```
   In our trained model have similar ROC peformance excepted for `TREE` and `qda`. Considering our model is used for improving screening process, we would prefer model with higher sensitivity. Considering both metrics, MARS method which has high ROC and highest mean sensitivity is chosen as our model.
 
 ```{r explain_mars}
-mars = explain(mars_model,label = "MARS",data = X_tr,y = Y_tr %>% as.numeric(),verbose = F)
+mars = DALEX::explain(mars_model,label = "MARS",data = X_tr,y = Y_tr %>% as.numeric(),verbose = F)
 mars_important =  model_parts(mars)
 
 mars_int = plot(mars_important)
@@ -468,13 +468,16 @@ legend("bottomright",
 
   MARS model has high predictability and high sensitivity, which is suitable for screening. The MARS model, with it's nature of spline, also provide good reference for critical values for labs/ testing result for diagnosis.
 
-\begin{thebibliography}
+\begin{thebibliography}{9}
 \bibitem{cdccardio}
 Centers for Disease Control and Prevention:
-\texttt{https://www.cdc.gov/heartdisease/facts.htm#:~:text=Heart%20Disease%20in%20the%20United%20States&text=One%20person%20dies%20every%2036,1%20in%20every%204%20deaths.&text=Heart%20disease%20costs%20the%20United,year%20from%202014%20to%202015.}
+\url{https://www.cdc.gov/heartdisease/facts.htm#:~:text=Heart%20Disease%20in%20the%20United%20States&text=One%20person%20dies%20every%2036,1%20in%20every%204%20deaths.&text=Heart%20disease%20costs%20the%20United,year%20from%202014%20to%202015.}
+
+
 \bibitem{AHA}
-American Heart Association:Heart-Health Screenings
+American Heart Association:Heart-Health Screenings:
+
 \bibitem{heartdiseasedata}
 USI:
-\texttt{http://archive.ics.uci.edu/ml/datasets/heart+Disease}
+http://archive.ics.uci.edu/ml/datasets/heart+Disease
 \end{thebibliography}
